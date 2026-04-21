@@ -1883,7 +1883,7 @@ function saveSettings() {
   state.settings.kerenWebhookUrl = document.getElementById('set-keren-webhook-url').value.trim();
   state.settings.alertHours = parseInt(document.getElementById('set-alert-hours').value) || 72;
   state.settings.warnPct = parseInt(document.getElementById('set-warn-pct').value) || 80;
-  save(); toast('✓ הגדרות נשמרו');
+  fetch(APPS_SCRIPT_URL, {method:'POST', body:JSON.stringify({action:'saveSettings', settings:state.settings})});     save(); toast('✓ הגדרות נשמרו');
 }
 
 // ════════════════════════════════════════════
@@ -1891,7 +1891,7 @@ function saveSettings() {
 // ════════════════════════════════════════════
 async function refreshData() {
   toast('⏳ מרענן נתונים...');
-  const ok = await loadFromSheets().then(() => { renderDashboard(); renderInvoices(); });
+  const ok = await loadFromSheets().then(() => { fetch(APPS_SCRIPT_URL, {method:'POST', body:JSON.stringify({action:'getSettings'})}).then(r=>r.json()).then(d=>{ if(d.ok && d.settings){ Object.assign(state.settings, d.settings); save(); } renderDashboard(); renderInvoices(); }); });
   if (ok) {
     renderDashboard();
     renderInvoices();
