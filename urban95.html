@@ -1193,7 +1193,7 @@ function renderDashboard() {
   const bo = document.getElementById('budget-overview');
   bo.innerHTML = '';
   BUDGET_DATA.forEach(sec => {
-    const spent = state.invoices.filter(i => i.sectionId == sec.id && ['נשלחה לקרן תל אביב','שולמה'].includes(i.status)).reduce((s,i)=>s+i.total,0);
+    const spent = state.invoices.filter(i => i.sectionName === sec.name && ['נשלחה לקרן תל אביב','שולמה'].includes(i.status)).reduce((s,i)=>s+i.total,0);
     const pct = sec.total > 0 ? Math.min(Math.round(spent/sec.total*100), 100) : 0;
     const warnPct = state.settings.warnPct || 80;
     const cls = pct >= 100 ? 'red' : pct >= warnPct ? 'yellow' : '';
@@ -1220,7 +1220,7 @@ function renderDashboard() {
   });
   // Budget warnings
   BUDGET_DATA.forEach(sec => {
-    const spent = state.invoices.filter(i => i.sectionId == sec.id && ['נשלחה לקרן תל אביב','שולמה'].includes(i.status)).reduce((s,i)=>s+i.total,0);
+    const spent = state.invoices.filter(i => i.sectionName === sec.name && ['נשלחה לקרן תל אביב','שולמה'].includes(i.status)).reduce((s,i)=>s+i.total,0);
     const pct = spent/sec.total*100;
     if (pct >= 100) alerts.innerHTML += `<div class="alert alert-err">🔴 סעיף "${sec.name}" חרג מהתקציב! (${Math.round(pct)}%)</div>`;
     else if (pct >= (state.settings.warnPct||80)) alerts.innerHTML += `<div class="alert alert-warn">⚠️ סעיף "${sec.name}" הגיע ל-${Math.round(pct)}% מהתקציב</div>`;
@@ -1694,7 +1694,7 @@ function renderBudget() {
   const grid = document.getElementById('budget-cards');
   grid.innerHTML = '';
   BUDGET_DATA.forEach(sec => {
-    const spent = state.invoices.filter(i => i.sectionId == sec.id && ['נשלחה לקרן תל אביב','שולמה'].includes(i.status)).reduce((s,i)=>s+i.total,0);
+    const spent = state.invoices.filter(i => i.sectionName === sec.name && ['נשלחה לקרן תל אביב','שולמה'].includes(i.status)).reduce((s,i)=>s+i.total,0);
     const pct = Math.min(Math.round(spent/sec.total*100),100);
     const warnPct = state.settings.warnPct || 80;
     const cls = pct>=100?'red':pct>=warnPct?'yellow':'';
@@ -1891,7 +1891,7 @@ function saveSettings() {
 // ════════════════════════════════════════════
 async function refreshData() {
   toast('⏳ מרענן נתונים...');
-  const ok = await loadFromSheets();
+  const ok = await loadFromSheets().then(() => { renderDashboard(); renderInvoices(); });
   if (ok) {
     renderDashboard();
     renderInvoices();
