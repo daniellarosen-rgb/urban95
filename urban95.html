@@ -412,7 +412,10 @@ textarea { min-height: 80px; resize: vertical; }
         <div class="card">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
             <div class="card-title" style="margin-bottom:0">חשבוניות אחרונות</div>
-            <button class="btn btn-primary btn-sm" onclick="exportKerenExcel()" title="ייצוא חשבוניות מאושרות לקרן ת&quot;א">📤 ייצוא לקרן ת"א</button>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-primary btn-sm" onclick="exportKerenExcel()" title="ייצוא חשבוניות מאושרות לקרן ת&quot;א">📤 ייצוא לקרן ת"א</button>
+              <button class="btn btn-secondary btn-sm" onclick="exportKerenExcel(true)" title="ייצוא הכולל גם חשבוניות שכבר נשלחו לקרן ת&quot;א">📤 ייצוא (כולל שנשלחו)</button>
+            </div>
           </div>
           <div class="tbl-wrap">
             <table id="recent-table">
@@ -487,6 +490,10 @@ textarea { min-height: 80px; resize: vertical; }
             <div class="form-group">
               <label class="required">סכום לפני מע"מ (₪)</label>
               <input type="number" id="f-amount" placeholder="0" oninput="calcTotal()">
+              <label style="display:flex;align-items:center;gap:8px;margin-top:6px;cursor:pointer;font-size:13px;font-weight:500;color:var(--red)">
+                <input type="checkbox" id="f-credit-note" onchange="calcTotal()" style="width:15px;height:15px;cursor:pointer">
+                חשבונית זיכוי מספק (הסכום יחושב וירשם כמינוס)
+              </label>
             </div>
 
             <!-- 8. VAT -->
@@ -595,6 +602,7 @@ textarea { min-height: 80px; resize: vertical; }
           </select>
           <button class="btn btn-secondary btn-sm" onclick="exportCSV()">⬇ ייצוא Excel (מלא)</button>
           <button class="btn btn-primary btn-sm" onclick="exportKerenExcel()" title="ייצוא חשבוניות מאושרות לקרן ת&quot;א">📤 ייצוא לקרן ת"א</button>
+          <button class="btn btn-secondary btn-sm" onclick="exportKerenExcel(true)" title="ייצוא הכולל גם חשבוניות שכבר נשלחו לקרן ת&quot;א">📤 ייצוא (כולל שנשלחו)</button>
         </div>
         <div class="card">
           <div class="tbl-wrap">
@@ -663,6 +671,11 @@ textarea { min-height: 80px; resize: vertical; }
             <div style="font-size:28px;margin-bottom:8px">🏢</div>
             <div style="font-weight:700;margin-bottom:4px">פירוט לפי ספק</div>
             <div style="font-size:13px;color:var(--gray2)">סכומים לכל ספק</div>
+          </div>
+          <div class="card" style="cursor:pointer" onclick="genReport('subsection')">
+            <div style="font-size:28px;margin-bottom:8px">🧩</div>
+            <div style="font-weight:700;margin-bottom:4px">פילוח לפי תת-סעיף</div>
+            <div style="font-size:13px;color:var(--gray2)">חשבוניות וסכומים לכל תת-סעיף</div>
           </div>
         </div>
         <div id="report-output" style="margin-top:20px"></div>
@@ -1153,6 +1166,15 @@ function statusBadge(s) {
   return `<span class="badge ${map[s]||'badge-new'}">${s}</span>`;
 }
 
+// מיפוי סטטוס קודם — לצורך אפשרות "החזרת סטטוס אחורה"
+const PREV_STATUS = {
+  'נשלחה לנועה': 'חדשה',
+  'מאושרת': 'נשלחה לנועה',
+  'לא מאושרת': 'נשלחה לנועה',
+  'נשלחה לקרן תל אביב': 'מאושרת',
+  'שולמה': 'נשלחה לקרן תל אביב'
+};
+
 function addLog(msg) {
   const now = new Date().toLocaleString('he-IL');
   state.actionLog.unshift({ time:now, msg });
@@ -1348,7 +1370,8 @@ function onSectionChange() {
 function calcTotal() {
   const amt = parseFloat(document.getElementById('f-amount').value) || 0;
   const vat = parseFloat(document.getElementById('f-vat').value) || 0;
-  document.getElementById('f-total').value = (amt * (1 + vat/100)).toFixed(2);
+  const sign = document.getElementById('f-credit-note').checked ? -1 : 1;
+  document.getElementById('f-total').value = (sign * amt * (1 + vat/100)).toFixed(2);
 }
 
 function onFileSelect() {
@@ -1382,6 +1405,7 @@ function clearForm() {
   document.getElementById('f-amount').value = '';
   document.getElementById('f-vat').value = 18;
   document.getElementById('f-total').value = '';
+  document.getElementById('f-credit-note').checked = false;
   document.getElementById('f-notes').value = '';
   document.getElementById('f-file').value = '';
   document.getElementById('file-name-display').textContent = '';
@@ -1438,7 +1462,9 @@ function submitInvoice() {
   const sec = BUDGET_DATA.find(s => s.id === secId);
   const subId = document.getElementById('f-subsection').value;
   const subSec = sec && subId ? sec.subs.find(s => s.id === subId) : null;
-  const amount = parseFloat(document.getElementById('f-amount').value);
+  const isCredit = document.getElementById('f-credit-note').checked;
+  const sign = isCredit ? -1 : 1;
+  const amount = sign * Math.abs(parseFloat(document.getElementById('f-amount').value));
   const vat = parseFloat(document.getElementById('f-vat').value) || 0;
   const total = parseFloat(document.getElementById('f-total').value) || amount;
 
@@ -1456,6 +1482,7 @@ function submitInvoice() {
     amountBefore: amount,
     vatPct: vat,
     total: total,
+    isCredit: isCredit,
     uploader: state.currentUser.name,
     uploaderEmail: state.currentUser.email,
     notes: document.getElementById('f-notes').value.trim(),
@@ -1576,7 +1603,7 @@ function renderInvoices(list) {
     <td>${inv.invNum}</td>
     <td>${fmtDate(inv.date)}</td>
     <td style="font-size:12px">${(inv.sectionName||'').substring(0,28)}</td>
-    <td>${fmt(inv.total)}</td>
+    <td style="color:${(inv.total||0)<0?'var(--red)':'inherit'}">${fmt(inv.total)}${(inv.total||0)<0?' 🔻':''}</td>
     <td style="font-size:12px">${(inv.purpose||'—').substring(0,25)}</td>
     <td>${statusBadge(inv.status)}</td>
     <td>
@@ -1650,7 +1677,8 @@ function editInvoice(id) {
 
     // שאר שדות
     document.getElementById('f-purpose').value = inv.purpose || '';
-    document.getElementById('f-amount').value = inv.amountBefore || '';
+    document.getElementById('f-credit-note').checked = !!inv.isCredit || (inv.total||0) < 0;
+    document.getElementById('f-amount').value = inv.amountBefore != null ? Math.abs(inv.amountBefore) : '';
     document.getElementById('f-vat').value = (inv.vatPct !== undefined && inv.vatPct !== null) ? inv.vatPct : 18;
     document.getElementById('f-total').value = inv.total || '';
     document.getElementById('f-notes').value = inv.notes || '';
@@ -1713,7 +1741,7 @@ function viewInvoice(id) {
       <div class="full"><div style="color:var(--gray2);font-size:12px">מטרת ההוצאה</div>${inv.purpose||'—'}</div>
       <div><div style="color:var(--gray2);font-size:12px">סכום לפני מע"מ</div>${fmt(inv.amountBefore)}</div>
       <div><div style="color:var(--gray2);font-size:12px">מע"מ</div>${inv.vatPct}%</div>
-      <div><div style="color:var(--gray2);font-size:12px">סכום כולל</div><strong>${fmt(inv.total)}</strong></div>
+      <div><div style="color:var(--gray2);font-size:12px">סכום כולל</div><strong style="color:${(inv.total||0)<0?'var(--red)':'inherit'}">${fmt(inv.total)}${(inv.total||0)<0?' (זיכוי)':''}</strong></div>
       <div><div style="color:var(--gray2);font-size:12px">הועלה על ידי</div>${inv.uploader}</div>
       <div><div style="color:var(--gray2);font-size:12px">תאריך העלאה</div>${fmtDate(inv.uploadDate)}</div>
       ${inv.sentToKerenAt ? `<div><div style="color:var(--gray2);font-size:12px">נשלח לקרן</div>${fmtDate(inv.sentToKerenAt)}</div>` : ''}
@@ -1738,8 +1766,39 @@ function viewInvoice(id) {
   if (inv.status==='נשלחה לקרן תל אביב' && (state.currentUser.role==='admin'||state.currentUser.role==='approver')) {
     footer.innerHTML += `<button class="btn btn-success" onclick="markPaid(${inv.id});closeModal('modal-invoice')">💵 סמן כשולמה</button>`;
   }
+  if (PREV_STATUS[inv.status] && state.currentUser.role==='admin') {
+    footer.innerHTML += `<button class="btn btn-secondary" onclick="revertStatus(${inv.id})" style="border:1px solid var(--red);color:var(--red)" title="להחזיר לסטטוס הקודם: ${PREV_STATUS[inv.status]}">⬅ החזר סטטוס אחורה</button>`;
+  }
   footer.innerHTML += `<button class="btn btn-secondary" onclick="closeModal('modal-invoice')">סגור</button>`;
   openModal('modal-invoice');
+}
+
+function revertStatus(id) {
+  const inv = state.invoices.find(i => i.id === id);
+  if (!inv) return;
+  const prev = PREV_STATUS[inv.status];
+  if (!prev) { toast('⚠️ לא ניתן להחזיר את הסטטוס הזה אחורה'); return; }
+  if (!confirm(`להחזיר את הסטטוס של חשבונית ${inv.invNum} (${inv.supplier}) מ"${inv.status}" ל"${prev}"?`)) return;
+
+  const extraData = {};
+  const fromStatus = inv.status;
+  if (fromStatus === 'שולמה') { inv.paidDate = ''; extraData.paidDate = ''; }
+  if (fromStatus === 'נשלחה לקרן תל אביב') { inv.sentToKerenAt = ''; extraData.sentToKerenAt = ''; }
+  if (fromStatus === 'מאושרת') { inv.approvedAt = ''; extraData.approvedAt = ''; }
+  if (fromStatus === 'לא מאושרת') { inv.rejectReason = ''; inv.rejectedAt = ''; extraData.rejectReason = ''; extraData.rejectedAt = ''; }
+
+  inv.status = prev;
+  addLog(`⬅ סטטוס הוחזר אחורה — חשבונית ${inv.invNum} (${inv.supplier}) : "${fromStatus}" ← "${prev}"`);
+  save(); renderInvoices(); renderDashboard();
+  closeModal('modal-invoice');
+  toast(`✓ הסטטוס הוחזר ל"${prev}"`);
+
+  fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    body: JSON.stringify({ action: 'updateStatus', invNum: inv.invNum, status: prev, extraData })
+  }).then(() => {
+    loadFromSheets().then(() => { renderInvoices(); renderDashboard(); });
+  }).catch(e=>{});
 }
 
 function approveInvoice(id) {
@@ -1936,6 +1995,21 @@ function genReport(type) {
     html += Object.entries(bySupp).map(([s,v])=>`<tr><td>${s}</td><td>${state.invoices.filter(i=>i.supplier===s).length}</td><td>${fmt(v)}</td></tr>`).join('') || '<tr><td colspan="3" style="text-align:center;padding:20px;color:var(--gray2)">אין נתונים</td></tr>';
     html += '</tbody></table></div></div>';
     out.innerHTML = html;
+  } else if (type === 'subsection') {
+    const bySub = {};
+    state.invoices.forEach(i => {
+      const key = (i.subsectionName && i.subsectionName.trim()) ? i.subsectionName : '— ללא תת-סעיף —';
+      if (!bySub[key]) bySub[key] = { total: 0, count: 0, sectionName: i.sectionName || '' };
+      bySub[key].total += i.total;
+      bySub[key].count += 1;
+    });
+    let html = '<div class="card"><div class="card-title">פילוח חשבוניות לפי תת-סעיף</div><div class="tbl-wrap"><table><thead><tr><th>סעיף</th><th>תת-סעיף</th><th>מספר חשבוניות</th><th>סכום כולל</th></tr></thead><tbody>';
+    const rows = Object.entries(bySub).sort((a,b) => b[1].total - a[1].total);
+    html += rows.length
+      ? rows.map(([name,d]) => `<tr><td style="font-size:12px;color:var(--gray2)">${d.sectionName}</td><td>${name}</td><td>${d.count}</td><td>${fmt(d.total)}</td></tr>`).join('')
+      : '<tr><td colspan="4" style="text-align:center;padding:20px;color:var(--gray2)">אין נתונים</td></tr>';
+    html += '</tbody></table></div></div>';
+    out.innerHTML = html;
   }
 }
 
@@ -1959,10 +2033,11 @@ function exportCSV() {
 // ════════════════════════════════════════════
 const GRANT_NUM = '2025-099'; // מס' מענק קבוע
 
-function exportKerenExcel() {
-  const approved = state.invoices.filter(i => i.status === 'מאושרת');
+function exportKerenExcel(includeSent) {
+  const statuses = includeSent ? ['מאושרת','נשלחה לקרן תל אביב'] : ['מאושרת'];
+  const approved = state.invoices.filter(i => statuses.includes(i.status));
   if (!approved.length) {
-    toast('⚠️ אין חשבוניות מאושרות הממתינות לשליחה לקרן ת"א');
+    toast(includeSent ? '⚠️ אין חשבוניות מאושרות או שנשלחו לקרן ת"א' : '⚠️ אין חשבוניות מאושרות הממתינות לשליחה לקרן ת"א');
     return;
   }
 
@@ -2010,11 +2085,14 @@ function exportKerenExcel() {
   a.download = `קרן_תא_${new Date().toISOString().split('T')[0]}.csv`;
   a.click();
 
-  // שאלה: לסמן כנשלחה?
-  if (confirm(`הורדת ${approved.length} חשבוניות לקרן ת"א.\n\nלסמן את כולן כ"נשלחה לקרן ת"א"?`)) {
-    approved.forEach(inv => markSentToKeren(inv.id, true));
-    toast(`✓ ${approved.length} חשבוניות סומנו כנשלחו לקרן ת"א`);
+  // שאלה: לסמן כנשלחה? — רק עבור חשבוניות שעדיין במצב "מאושרת" (לא כאלה שכבר נשלחו)
+  const toMark = approved.filter(i => i.status === 'מאושרת');
+  if (toMark.length && confirm(`הורדת ${approved.length} חשבוניות לקרן ת"א.\n\nלסמן את ${toMark.length} החשבוניות המאושרות כ"נשלחה לקרן ת"א"?`)) {
+    toMark.forEach(inv => markSentToKeren(inv.id, true));
+    toast(`✓ ${toMark.length} חשבוניות סומנו כנשלחו לקרן ת"א`);
     renderInvoices(); renderDashboard();
+  } else {
+    toast(`✓ הורדו ${approved.length} חשבוניות`);
   }
 }
 
