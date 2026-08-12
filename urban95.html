@@ -1469,7 +1469,7 @@ function submitInvoice() {
   const total = parseFloat(document.getElementById('f-total').value) || amount;
 
   const inv = {
-    id: state.nextInvId++,
+    id: (isEditing && state._editingInv) ? state._editingInv.id : state.nextInvId++,
     invNum: invNumValue,
     supplierId: supId,
     supplier: sup ? sup.name : '',
@@ -1483,17 +1483,29 @@ function submitInvoice() {
     vatPct: vat,
     total: total,
     isCredit: isCredit,
-    uploader: state.currentUser.name,
-    uploaderEmail: state.currentUser.email,
+    uploader: (isEditing && state._editingInv) ? state._editingInv.uploader : state.currentUser.name,
+    uploaderEmail: (isEditing && state._editingInv) ? state._editingInv.uploaderEmail : state.currentUser.email,
     notes: document.getElementById('f-notes').value.trim(),
     isNewSupplier: document.getElementById('f-new-supplier').checked,
     supFile1Name: document.getElementById('f-sup-file1').files[0]?.name || '',  // ניהול חשבון
     supFile2Name: document.getElementById('f-sup-file2').files[0]?.name || '',  // ניכוי מס
     fileName: document.getElementById('f-file').files[0]?.name || (isEditing && state._editingInv ? state._editingInv.fileName : ''),
-    uploadDate: new Date().toISOString(),
+    uploadDate: (isEditing && state._editingInv) ? state._editingInv.uploadDate : new Date().toISOString(),
     driveUrl: (isEditing && state._editingInv) ? (state._editingInv.driveUrl || '') : '',
-    status: 'חדשה',
+    status: (isEditing && state._editingInv) ? state._editingInv.status : 'חדשה',
   };
+
+  // בעריכה — לשמר שדות מעקב/אישור קיימים כדי לא לאבד היסטוריה ולא לאפס סטטוס
+  if (isEditing && state._editingInv) {
+    inv.sentToNoaAt   = state._editingInv.sentToNoaAt   || '';
+    inv.approvedAt    = state._editingInv.approvedAt    || '';
+    inv.sentToKerenAt = state._editingInv.sentToKerenAt || '';
+    inv.paidDate       = state._editingInv.paidDate      || '';
+    inv.rejectReason  = state._editingInv.rejectReason  || '';
+    inv.rejectedAt    = state._editingInv.rejectedAt    || '';
+    inv.lastEditedBy  = state.currentUser.name;
+    inv.lastEditedAt  = new Date().toISOString();
+  }
 
   // שמירת תוכן הקבצים כ-base64 כדי שיהיו זמינים בשלב האישור
   const _mainFile = document.getElementById('f-file').files[0];
@@ -1505,6 +1517,23 @@ function submitInvoice() {
   if (_sup2) _filePromises.push(toBase64(_sup2).then(d => { inv.supFile2Data = d; }));
 
   Promise.all(_filePromises).then(() => {
+    // עריכת חשבונית קיימת — שומר על הסטטוס וההיסטוריה, לא שולח שוב לאישור נועה
+    if (isEditing) {
+      state.nextInvId = Math.max(state.nextInvId, inv.id + 1);
+      save();
+      fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'saveNewInvoice', invoice: {...inv, fileObj:undefined} })
+      }).then(r => r.json()).then(() => {
+        loadFromSheets().then(() => { renderDashboard(); renderInvoices(); });
+      }).catch(e => console.log('updateInvoice error:', e));
+      addLog(`✏️ חשבונית עודכנה — ${inv.invNum} (${inv.supplier}) — הסטטוס נשאר: ${inv.status}`);
+      toast('✓ החשבונית עודכנה — הסטטוס נשמר ללא שינוי');
+      clearForm();
+      renderDashboard();
+      return;
+    }
+
     // If Noa is uploading — show self-approve dialog
     if (state.currentUser.role === 'approver' || state.currentUser.login === 'noa') {
       state.pendingSelfApprove = inv;
@@ -1658,21 +1687,42 @@ function editInvoice(id) {
       document.getElementById('f-date').value = '';
     }
 
-    // ספק
-    document.getElementById('f-supplier').value = String(inv.supplierId || '');
+    // ספק — התאמה לפי ID, ואם לא נמצא (ה-ID לא תמיד נשמר נכון ב-Sheets) — לפי שם
+    let supMatch = null;
+    if (inv.supplierId != null && inv.supplierId !== '') {
+      supMatch = state.suppliers.find(s => String(s.id) === String(inv.supplierId));
+    }
+    if (!supMatch && inv.supplier) {
+      supMatch = state.suppliers.find(s => s.name === inv.supplier);
+    }
+    document.getElementById('f-supplier').value = supMatch ? String(supMatch.id) : '';
     onSupplierChange();
 
-    // סעיף
+    // סעיף — התאמה לפי ID, ואם לא נמצא — לפי שם
+    let secMatch = null;
+    if (inv.sectionId != null && inv.sectionId !== '') {
+      secMatch = BUDGET_DATA.find(s => String(s.id) === String(inv.sectionId));
+    }
+    if (!secMatch && inv.sectionName) {
+      secMatch = BUDGET_DATA.find(s => s.name === inv.sectionName);
+    }
     const secEl = document.getElementById('f-section');
-    secEl.value = String(inv.sectionId || '');
-    if (!secEl.value && inv.sectionId) secEl.value = inv.sectionId;
+    secEl.value = secMatch ? String(secMatch.id) : '';
     onSectionChange();
 
-    // תת-סעיף — אחרי שהרשימה נטענה
+    // תת-סעיף — התאמה לפי ID, ואם לא נמצא — לפי שם (אחרי שרשימת התתי-סעיפים נטענה)
     setTimeout(() => {
       const subEl = document.getElementById('f-subsection');
-      subEl.value = String(inv.subsectionId || '');
-      if (!subEl.value && inv.subsectionId) subEl.value = inv.subsectionId;
+      let subMatch = null;
+      if (secMatch) {
+        if (inv.subsectionId != null && inv.subsectionId !== '') {
+          subMatch = secMatch.subs.find(s => String(s.id) === String(inv.subsectionId));
+        }
+        if (!subMatch && inv.subsectionName) {
+          subMatch = secMatch.subs.find(s => s.name === inv.subsectionName);
+        }
+      }
+      subEl.value = subMatch ? String(subMatch.id) : '';
     }, 200);
 
     // שאר שדות
