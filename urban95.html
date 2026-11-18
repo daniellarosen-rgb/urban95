@@ -1386,7 +1386,7 @@ function checkDuplicate() {
   const sup = document.getElementById('f-supplier').value;
   const num = document.getElementById('f-invnum').value.trim();
   const warn = document.getElementById('dup-warning');
-  if (sup && num && state.invoices.find(i => i.supplierId == sup && i.invNum === num)) {
+  if (sup && num && state.invoices.find(i => String(i.supplierId) === String(sup) && String(i.invNum).trim() === num)) {
     warn.style.display = 'block';
   } else {
     warn.style.display = 'none';
@@ -1457,7 +1457,7 @@ function submitInvoice() {
   const invNumValue = noInvNum ? generateAutoInvNum() : document.getElementById('f-invnum').value.trim();
 
   const supId = parseInt(document.getElementById('f-supplier').value);
-  const sup = state.suppliers.find(s => s.id === supId);
+  const sup = findSupplierById(supId);
   const secId = parseInt(document.getElementById('f-section').value);
   const sec = BUDGET_DATA.find(s => s.id === secId);
   const subId = document.getElementById('f-subsection').value;
@@ -1523,8 +1523,9 @@ function submitInvoice() {
       save();
       fetch(APPS_SCRIPT_URL, {
         method: 'POST',
-        body: JSON.stringify({ action: 'saveNewInvoice', invoice: {...inv, fileObj:undefined} })
-      }).then(r => r.json()).then(() => {
+        body: JSON.stringify({ action: 'saveNewInvoice', isEdit: true, invoice: {...inv, fileObj:undefined} })
+      }).then(r => r.json()).then(d => {
+        if (!d || !d.ok) toast('⚠️ העריכה לא נשמרה: ' + ((d && d.error) || ''));
         loadFromSheets().then(() => { renderDashboard(); renderInvoices(); });
       }).catch(e => console.log('updateInvoice error:', e));
       addLog(`✏️ חשבונית עודכנה — ${inv.invNum} (${inv.supplier}) — הסטטוס נשאר: ${inv.status}`);
@@ -1576,10 +1577,7 @@ function confirmSelfApprove() {
     method: 'POST',
     body: JSON.stringify({ action: 'saveNewInvoice', invoice: {...inv, fileObj:undefined} })
   }).then(() => {
-    fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'updateStatus', invNum: inv.invNum, status: 'מאושרת' })
-    });
+    // הסטטוס "מאושרת" כבר נשמר יחד עם החשבונית — אין צורך בעדכון נוסף
     loadFromSheets().then(() => { renderDashboard(); renderInvoices(); });
   }).catch(() => {
     loadFromSheets().then(() => { renderDashboard(); renderInvoices(); });
@@ -1591,7 +1589,7 @@ function confirmSelfApprove() {
 
 function runPostApprovalActions(inv) {
   if (inv.isNewSupplier) {
-    const sup = state.suppliers.find(s => s.id === inv.supplierId);
+    const sup = findSupplierById(inv.supplierId);
     if (sup) sup.isNew = false;
     save();
   }
@@ -1601,7 +1599,7 @@ function runPostApprovalActions(inv) {
   fetch(APPS_SCRIPT_URL, {method:'POST', body:JSON.stringify({action:'loadData'})})
     .then(r => r.json())
     .then(d => {
-      const fresh = (d.invoices || []).find(i => String(i.invNum) === String(inv.invNum));
+      const fresh = (d.invoices || []).find(i => String(i.id) === String(inv.id));
       if (fresh) {
         if (fresh.driveUrl) inv.driveUrl = fresh.driveUrl;
         if (fresh.supFile1Url) inv.supFile1Url = fresh.supFile1Url;
@@ -1656,7 +1654,9 @@ function deleteInvoice(id) {
   state.invoices = state.invoices.filter(i => i.id !== id);
   save(); renderInvoices(); renderDashboard();
   if (inv) {
-    fetch(APPS_SCRIPT_URL, { method:'POST', body:JSON.stringify({ action:'deleteInvoice', invNum:inv.invNum }) }).catch(e=>{});
+    apiCall({ action:'deleteInvoice', id: inv.id, supplierId: inv.supplierId, supplier: inv.supplier, invNum:inv.invNum, deletedBy: state.currentUser ? state.currentUser.name : '' })
+      .then(d => { if (d && d.ok) addLog(`🗑️ חשבונית נמחקה — ${inv.invNum} (${inv.supplier}) — עותק נשמר בגיליון "חשבוניות שנמחקו"`); })
+      .catch(e=>{});
   }
   toast('✓ החשבונית נמחקה');
 }
@@ -1689,11 +1689,11 @@ function editInvoice(id) {
 
     // ספק — התאמה לפי ID, ואם לא נמצא (ה-ID לא תמיד נשמר נכון ב-Sheets) — לפי שם
     let supMatch = null;
-    if (inv.supplierId != null && inv.supplierId !== '') {
-      supMatch = state.suppliers.find(s => String(s.id) === String(inv.supplierId));
+    if (inv.supplier) {
+      supMatch = state.suppliers.find(s => s.name.trim() === String(inv.supplier).trim());
     }
-    if (!supMatch && inv.supplier) {
-      supMatch = state.suppliers.find(s => s.name === inv.supplier);
+    if (!supMatch && inv.supplierId != null && inv.supplierId !== '') {
+      supMatch = state.suppliers.find(s => String(s.id) === String(inv.supplierId));
     }
     document.getElementById('f-supplier').value = supMatch ? String(supMatch.id) : '';
     onSupplierChange();
@@ -1754,14 +1754,15 @@ function editInvoice(id) {
 }
 
 function deleteSupplier(id) {
-  const sup = state.suppliers.find(s => s.id === id);
+  const sup = findSupplierById(id);
   if (!sup) return;
-  const hasInvoices = state.invoices.some(i => i.supplierId === id);
+  const hasInvoices = state.invoices.some(i => invMatchesSupplier(i, sup));
   if (hasInvoices) { toast('⚠️ לא ניתן למחוק ספק עם חשבוניות קיימות'); return; }
   if (!confirm(`האם למחוק את הספק "${sup.name}"?`)) return;
-  state.suppliers = state.suppliers.filter(s => s.id !== id);
+  state.suppliers = state.suppliers.filter(s => String(s.id) !== String(id));
+  addLog(`🗑️ ספק נמחק — ${sup.name} (ח.פ ${sup.hp||'—'}) — על ידי ${state.currentUser ? state.currentUser.name : ''}`);
   save(); populateSupplierDropdown(); renderSuppliers();
-  fetch(APPS_SCRIPT_URL, { method:'POST', body:JSON.stringify({ action:'deleteSupplier', supplierId:id }) }).catch(e=>{});
+  apiCall({ action:'deleteSupplier', supplierId:id }).catch(e=>{});
   toast('✓ הספק נמחק');
 }
 
@@ -1843,10 +1844,7 @@ function revertStatus(id) {
   closeModal('modal-invoice');
   toast(`✓ הסטטוס הוחזר ל"${prev}"`);
 
-  fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    body: JSON.stringify({ action: 'updateStatus', invNum: inv.invNum, status: prev, extraData })
-  }).then(() => {
+  apiCall({ action: 'updateStatus', id: inv.id, supplierId: inv.supplierId, supplier: inv.supplier, invNum: inv.invNum, status: prev, extraData }).then(() => {
     loadFromSheets().then(() => { renderInvoices(); renderDashboard(); });
   }).catch(e=>{});
 }
@@ -1859,10 +1857,7 @@ function approveInvoice(id) {
   save(); renderInvoices(); renderDashboard();
   toast('✓ החשבונית אושרה — ממתינה לייצוא לקרן ת"א');
   // עדכון סטטוס ב-Sheets
-  fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    body: JSON.stringify({ action: 'updateStatus', invNum: inv.invNum, status: 'מאושרת' })
-  }).then(() => {
+  apiCall({ action: 'updateStatus', id: inv.id, supplierId: inv.supplierId, supplier: inv.supplier, invNum: inv.invNum, status: 'מאושרת' }).then(() => {
     loadFromSheets().then(() => { renderInvoices(); renderDashboard(); });
   });
 }
@@ -1901,10 +1896,7 @@ function confirmPaid() {
     inv.paidDate = dt;
     addLog(`💵 חשבונית שולמה — ${inv.invNum} (${inv.supplier}) | ${fmt(inv.total)}`);
     // עדכון ב-Sheets
-    fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({ action: 'updateStatus', invNum: inv.invNum, status: 'שולמה', extraData: { paidDate: dt } })
-    }).catch(e=>{});
+    apiCall({ action: 'updateStatus', id: inv.id, supplierId: inv.supplierId, supplier: inv.supplier, invNum: inv.invNum, status: 'שולמה', extraData: { paidDate: dt } }).catch(e=>{});
   }
   closeModal('modal-paid');
   save(); renderInvoices(); renderDashboard();
@@ -1945,11 +1937,22 @@ function renderBudget() {
 // ════════════════════════════════════════════
 //  SUPPLIERS
 // ════════════════════════════════════════════
+// ── התאמת חשבונית לספק: לפי מזהה, ואם אין — לפי שם ──
+function invMatchesSupplier(inv, s) {
+  if (!inv || !s) return false;
+  const invName = String(inv.supplier || '').trim();
+  if (invName) return invName === String(s.name || '').trim();   // קודם לפי שם — השם נשמר בחשבונית
+  return inv.supplierId != null && inv.supplierId !== '' && String(inv.supplierId) === String(s.id);
+}
+function findSupplierById(id) {
+  return state.suppliers.find(s => String(s.id) === String(id));
+}
+
 function renderSuppliers() {
   const tbody = document.getElementById('suppliers-tbody');
   tbody.innerHTML = state.suppliers.map(s => {
-    const invs = state.invoices.filter(i => i.supplierId === s.id);
-    const total = invs.filter(i => i.status==='שולמה').reduce((sum,i)=>sum+i.total,0);
+    const invs = state.invoices.filter(i => invMatchesSupplier(i, s));
+    const total = invs.filter(i => i.status==='שולמה').reduce((sum,i)=>sum+(Number(i.total)||0),0);
     return `<tr>
       <td><strong>${s.name}</strong>${s.note ? `<br><small style="color:var(--gray2)">${s.note}</small>` : ''}</td>
       <td>${s.hp||'—'}</td>
@@ -1965,6 +1968,9 @@ function renderSuppliers() {
 }
 
 function openAddSupplier() {
+  // חשוב: מחזירים את כפתור השמירה ל"הוספת ספק". בלי זה, אחרי עריכה שבוטלה,
+  // הוספת ספק חדש הייתה דורסת את הספק שנפתח קודם לעריכה.
+  document.querySelector('#modal-supplier .btn-primary').onclick = saveSupplier;
   document.getElementById('sup-name').value = '';
   document.getElementById('sup-hp').value = '';
   document.getElementById('sup-type').value = 'vat';
@@ -1977,25 +1983,40 @@ function saveSupplier() {
   if (state.suppliers.find(s => s.name.trim().toLowerCase() === name.toLowerCase())) {
     toast('⚠️ ספק עם שם זה כבר קיים במערכת'); return;
   }
-  const maxId = state.suppliers.reduce((m,s)=>Math.max(m,s.id),0);
+  const maxId = state.suppliers.reduce((m,s)=>Math.max(m, Number(s.id)||0),0);
   const newSup = { id:maxId+1, name, hp:document.getElementById('sup-hp').value.trim(), type:document.getElementById('sup-type').value, note:document.getElementById('sup-note').value.trim(), isNew:false };
   state.suppliers.push(newSup);
   save(); populateSupplierDropdown(); renderSuppliers();
   // שמירה ב-Sheets
-  fetch(APPS_SCRIPT_URL, { method:'POST', body:JSON.stringify({ action:'saveSupplier', supplier:newSup }) }).catch(e=>{});
+  fetch(APPS_SCRIPT_URL, { method:'POST', body:JSON.stringify({ action:'saveSupplier', isNew:true, supplier:newSup }) })
+    .then(r => r.json())
+    .then(d => {
+      if (d && d.id) newSup.id = d.id;   // המזהה נקבע בשרת
+      if (d && !d.ok) toast('⚠️ ' + (d.error || 'הספק לא נשמר'));
+      loadFromSheets().then(() => { populateSupplierDropdown(); renderSuppliers(); });
+    }).catch(e=>{});
   closeModal('modal-supplier');
   toast('✓ ספק נוסף');
 }
 function editSupplier(id) {
-  const s = state.suppliers.find(x=>x.id===id);
+  const s = findSupplierById(id);
   if (!s) return;
   document.getElementById('sup-name').value = s.name;
   document.getElementById('sup-hp').value = s.hp||'';
   document.getElementById('sup-type').value = s.type;
   document.getElementById('sup-note').value = s.note||'';
   openModal('modal-supplier');
+  const oldName = s.name;
+  const invCount = state.invoices.filter(i => invMatchesSupplier(i, s)).length;
   document.querySelector('#modal-supplier .btn-primary').onclick = () => {
-    s.name = document.getElementById('sup-name').value.trim();
+    const newName = document.getElementById('sup-name').value.trim();
+    if (!newName) { toast('⚠️ שם ספק חובה'); return; }
+    if (newName !== oldName) {
+      if (state.suppliers.find(x => x !== s && x.name.trim() === newName)) { toast('⚠️ ספק עם שם זה כבר קיים במערכת'); return; }
+      if (!confirm(`לשנות את שם הספק "${oldName}" ל-"${newName}"?` + (invCount ? `\nלספק יש ${invCount} חשבוניות.` : '') + `\n\nאם רצית להוסיף ספק חדש — לחצי ביטול ואז "+ הוסף ספק".`)) return;
+      addLog(`✏️ שם ספק שונה — "${oldName}" ← "${newName}" — על ידי ${state.currentUser ? state.currentUser.name : ''}`);
+    }
+    s.name = newName;
     s.hp   = document.getElementById('sup-hp').value.trim();
     s.type = document.getElementById('sup-type').value;
     s.note = document.getElementById('sup-note').value.trim();
@@ -2151,10 +2172,7 @@ function markSentToKeren(id, silent) {
   if (!inv) return;
   inv.status = 'נשלחה לקרן תל אביב';
   inv.sentToKerenAt = new Date().toISOString();
-  fetch(APPS_SCRIPT_URL, {
-    method: 'POST',
-    body: JSON.stringify({ action: 'updateStatus', invNum: inv.invNum, status: 'נשלחה לקרן תל אביב', extraData: { sentToKerenAt: inv.sentToKerenAt } })
-  }).catch(e=>{});
+  apiCall({ action: 'updateStatus', id: inv.id, supplierId: inv.supplierId, supplier: inv.supplier, invNum: inv.invNum, status: 'נשלחה לקרן תל אביב', extraData: { sentToKerenAt: inv.sentToKerenAt } }).catch(e=>{});
   if (!silent) {
     save(); renderInvoices(); renderDashboard();
     toast('✓ החשבונית סומנה כנשלחה לקרן ת"א');
@@ -2366,6 +2384,20 @@ async function testAppsScriptConnection() {
   } catch (err) {
     toast('❌ לא ניתן להתחבר ל-Apps Script');
   }
+}
+
+// ── קריאה לשרת עם בדיקת תשובה: אם השרת סירב — הודעה ורענון הנתונים ──
+function apiCall(payload) {
+  return fetch(APPS_SCRIPT_URL, { method:'POST', body: JSON.stringify(payload) })
+    .then(r => r.json())
+    .then(d => {
+      if (!d || !d.ok) {
+        toast('⚠️ ' + ((d && d.error) || 'הפעולה לא נשמרה בשרת'));
+        addLog('⚠️ השרת לא ביצע פעולה (' + payload.action + '): ' + ((d && d.error) || ''));
+        loadFromSheets().then(() => { renderInvoices(); renderDashboard(); renderSuppliers(); });
+      }
+      return d;
+    });
 }
 
 async function appendToSheets(inv) {
