@@ -2116,8 +2116,8 @@ function exportKerenExcel(includeSent) {
   const headers = [
     'מס\' מענק',
     'שם הספק',
-    'תאריך חשבונית',
     'מספר חשבונית',
+    'תאריך חשבונית',
     'סעיף',
     'תת סעיף',
     'מטרת ההוצאה',
@@ -2133,8 +2133,8 @@ function exportKerenExcel(includeSent) {
   const rows = approved.map(i => [
     GRANT_NUM,
     i.supplier,
-    fmtDate(i.date),
     i.invNum,
+    fmtDate(i.date),
     i.sectionName || '',
     i.subsectionName || '',
     i.purpose || '',
