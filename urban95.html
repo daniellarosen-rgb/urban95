@@ -1526,6 +1526,7 @@ function submitInvoice() {
         body: JSON.stringify({ action: 'saveNewInvoice', isEdit: true, invoice: {...inv, fileObj:undefined} })
       }).then(r => r.json()).then(d => {
         if (!d || !d.ok) toast('⚠️ העריכה לא נשמרה: ' + ((d && d.error) || ''));
+        else if (d.driveError) toast('⚠️ החשבונית נשמרה, אבל הקובץ לא נשמר בדרייב: ' + d.driveError);
         loadFromSheets().then(() => { renderDashboard(); renderInvoices(); });
       }).catch(e => console.log('updateInvoice error:', e));
       addLog(`✏️ חשבונית עודכנה — ${inv.invNum} (${inv.supplier}) — הסטטוס נשאר: ${inv.status}`);
@@ -1553,7 +1554,8 @@ function submitInvoice() {
     fetch(APPS_SCRIPT_URL, {
       method: 'POST',
       body: JSON.stringify({ action: 'saveNewInvoice', invoice: {...inv, fileObj:undefined} })
-    }).then(r => r.json()).then(() => {
+    }).then(r => r.json()).then(d => {
+      if (d && d.driveError) toast('⚠️ החשבונית נשמרה, אבל הקובץ לא נשמר בדרייב: ' + d.driveError);
       loadFromSheets().then(() => { renderDashboard(); renderInvoices(); });
     }).catch(e => console.log('saveNewInvoice error:', e));
     sendToMake('approval', inv);
@@ -1576,7 +1578,8 @@ function confirmSelfApprove() {
   fetch(APPS_SCRIPT_URL, {
     method: 'POST',
     body: JSON.stringify({ action: 'saveNewInvoice', invoice: {...inv, fileObj:undefined} })
-  }).then(() => {
+  }).then(r => r.json()).then(d => {
+    if (d && d.driveError) toast('⚠️ החשבונית נשמרה, אבל הקובץ לא נשמר בדרייב: ' + d.driveError);
     // הסטטוס "מאושרת" כבר נשמר יחד עם החשבונית — אין צורך בעדכון נוסף
     loadFromSheets().then(() => { renderDashboard(); renderInvoices(); });
   }).catch(() => {
@@ -1877,6 +1880,8 @@ function confirmReject() {
     inv.rejectedAt = new Date().toISOString();
     addLog(`✗ נועה דחתה — חשבונית ${inv.invNum} (${inv.supplier}) — ${reason}`);
     addLog(`📧 מייל דחייה נשלח ל-${inv.uploaderEmail||inv.uploader}`);
+    // שמירת הדחייה בגיליון — כדי שלא תחזור ל"נשלחה לנועה" אחרי רענון
+    apiCall({ action: 'updateStatus', id: inv.id, supplierId: inv.supplierId, supplier: inv.supplier, invNum: inv.invNum, status: 'לא מאושרת' }).catch(e=>{});
   }
   closeModal('modal-reject');
   save(); renderInvoices(); renderDashboard();
